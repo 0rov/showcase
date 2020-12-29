@@ -1,0 +1,243 @@
+/**
+  ************************************************** ****************************
+  * @file main.c
+  * @author fire
+  * @version V1.0
+  * @date 2013-xx-xx
+  * @brief camera fire eye ov7725 test routine
+  ************************************************** ****************************
+  * @attention
+  *
+  * Experimental platform: Bing fire F103-guide STM32 development board
+  * Forum : http://www.firebbs.cn
+  * Taobao: https://fire-stm32.taobao.com
+  *
+  ************************************************** ****************************
+  */
+  
+#include "stm32f10x.h"
+#include "./ov7725/bsp_ov7725.h"
+#include "./lcd/bsp_ili9341_lcd.h"
+#include "./led/bsp_led.h"
+#include "./usart/bsp_usart.h"
+#include "./key/bsp_key.h"
+#include "./systick/bsp_SysTick.h"
+#include "./bmp/bsp_bmp.h"
+#include "ff.h"
+#include "./trace/trace.h"
+
+
+Extern uint8_t Ov7725_vsync;
+
+Unsigned int Task_Delay[NumOfTask];
+
+Extern OV7725_MODE_PARAM cam_mode;
+
+FATFS fs; /* FatF,
+
+
+
+s file system object */
+FRESULT res_sd; /* File operation result */
+
+
+/**
+  * @brief main function
+  * @param no
+  * @retval none
+  */
+Int main(void)
+{
+
+Float frame_count = 0;
+Uint8_t retry = 0;
+Uint8_t BW = 0, Flag = 0;
+  SEARCH_AREA area = {IMG_X, IMG_X+IMG_W, IMG_Y, IMG_Y+IMG_H};
+	
+	/* LCD initialization */
+ILI9341_Init();
+ILI9341_GramScan ( 3 );
+
+LCD_SetFont(&Font8x16);
+LCD_SetColors(RED, BLACK);
+
+  ILI9341_Clear(0,0,LCD_X_LENGTH,LCD_Y_LENGTH); /* Clear screen, display all black */
+
+/********Display string example *********/
+  ILI9341_DispStringLine_EN(LINE(0),"BH OV7725 Test Demo");
+
+USART_Config();
+LED_GPIO_Config();
+Key_GPIO_Config();
+SysTick_Init();
+
+/* Mount sd file system */
+Res_sd = f_mount(&fs,"0:",1);
+If(res_sd != FR_OK)
+{
+Printf("\r\nPlease insert the development board into an SD card formatted into fat format.\r\n");
+}
+
+Printf("\r\n ** OV7725 camera real-time LCD display routine** \r\n");
+
+/* ov7725 gpio initialization */
+OV7725_GPIO_Config();
+
+LED_BLUE;
+/* ov7725 Register default configuration initialization * /
+While(OV7725_Init() != SUCCESS)
+{
+Retry++;
+If(retry>5)
+{
+Printf("\r\n does not detect OV7725 camera\r\n");
+ILI9341_DispStringLine_EN(LINE(2),"No OV7725 module detected!");
+While(1);
+}
+}
+
+
+/ * According to the camera parameter group configuration mode * /
+OV7725_Special_Effect(cam_mode.effect);
+/*Light mode*/
+OV7725_Light_Mode(cam_mode.light_mode);
+	/*saturation*/
+OV7725_Color_Saturation(cam_mode.saturation);
+/* Illumination*/
+OV7725_Brightness(cam_mode.brightness);
+/*contrast*/
+OV7725_Contrast(cam_mode.contrast);
+	/*Special effect*/
+OV7725_Special_Effect(cam_mode.effect);
+	
+	/*Set image sampling and mode size*/
+OV7725_Window_Set(cam_mode.cam_sx,
+Cam_mode.cam_sy,
+Cam_mode.cam_width,
+Cam_mode.cam_height,
+cam_mode.QVGA_VGA);
+
+/* Set the LCD scan mode */
+ILI9341_GramScan( cam_mode.lcd_scan );
+
+
+
+ILI9341_DispStringLine_EN(LINE(2),"OV7725 initialize success!");
+Printf("\r\nOV7725camera initialization completed\r\n");
+
+Ov7725_vsync = 0;
+
+While(1)
+{
+/* Received a new image for display */
+If( Ov7725_vsync == 2 )
+{
+Frame_count++;
+FIFO_PREPARE; /*FIFO preparation*/
+ImagDisp(cam_mode.lcd_sx,
+Cam_mode.lcd_sy,
+Cam_mode.cam_width,
+Cam_mode.cam_height); /* capture and display */
+
+Ov7725_vsync = 0;
+// LED1_TOGGLE;
+
+}
+
+/*Detection button*/
+If( Key_Scan(KEY1_GPIO_PORT,KEY1_GPIO_PIN) == KEY_ON )
+{
+Static uint8_t name_count = 0;
+Char name[40];
+
+/ / used to set the name of the screenshot to prevent duplication, the actual application can be named using the system time.
+Name_count++;
+Sprintf(name,"0:gray_%d.bmp",name_count);
+
+LED_BLUE;
+Printf("\r\n is taking a screenshot...");
+
+/* screenshot must set the LCD display direction and screenshot window */
+ILI9341_GramScan ( cam_mode.lcd_scan );
+
+If(Screen_Shot(0,0,LCD_X_LENGTH,LCD_Y_LENGTH,name) == 0)
+{
+Printf("\r\n screenshot success!");
+LED_GREEN;
+}
+Else
+{
+Printf("\r\n screenshot failed!");
+LED_RED;
+}
+}
+		
+		/ / detection button
+If( Key_Scan(KEY2_GPIO_PORT,KEY2_GPIO_PIN) == KEY_ON )
+{
+//BW = Itera_Threshold(320,240);
+While(1)
+{
+/* Received a new image for display */
+If( Ov7725_vsync == 2 )
+{
+Frame_count++;
+FIFO_PREPARE; /*FIFO preparation*/
+ImagDisp_BW(cam_mode.lcd_sx,
+Cam_mode.lcd_sy,
+Cam_mode.cam_width,
+Cam_mode.cam_height,130); /*Collect and display */
+If(Flag == 0)
+{
+If(Trace(&condition, &result, area, 0))
+{
+ILI9341_DrawTrapezium( result.x, result.y, result.w, result.h);
+//ILI9341_DrawRectangle( result.x-2, result.y-2, result.x+2, result.y+2, 0);
+ILI9341_DrawCircle ( result.x, result.y, 5, 1 );
+area.X_Start = result.x - ((result.w)>>1);
+area.X_End = result.x + ((result.w)>>1);
+area.Y_Start = result.y - ((result.h)>>1);
+area.Y_End = result.y + ((result.h)>>1);
+Flag = 1;
+Printf("\r\n find the target area");
+Printf("%d,%d,%d,%d\n",area.X_Start,area.X_End, area.Y_Start, area.Y_End );
+LED_GREEN;
+}
+}
+Else
+{
+If(Trace(&condition, &result, area, 1))
+{
+Printf("\r\n find the target");
+ILI9341_DrawRectangle( result.x - ((result.w)>>1), result.y - ((result.h)>>1), result.w, result.h, 0);
+//ILI9341_DrawRectangle( result.x-2, result.y-2, result.x+2, result.y+2, 0);
+ILI9341_DrawCircle ( result.x, result.y, 5, 1 );
+LED_RED;
+}
+Else
+{
+Printf("\r\n can't find the target");
+LED_GREEN;
+}
+}
+Ov7725_vsync = 0;
+// LED1_TOGGLE;
+
+}
+}
+}
+
+/* Calculate the frame rate at regular intervals*/
+If(Task_Delay[0] == 0)
+{
+Printf("\r\nframe_ate = %.2f fps\r\n",frame_count/10);
+Frame_count = 0;
+Task_Delay[0] = 10000;
+}
+}
+}
+
+
+
+
+/*********************************************END OF FILE* *********************/
